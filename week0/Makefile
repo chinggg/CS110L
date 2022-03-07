@@ -51,4 +51,7 @@ clean::
 	rm -fr $(C_PROGS) $(C_PROGS_OBJ)
 	rm -fr $(CXX_PROGS) $(CXX_PROGS_OBJ)
 
-.PHONY: all clean
+fuzz:
+	$(CC) -g -O0 -Wall -Wextra -std=gnu99 -fsanitize=fuzzer,address,leak,undefined -o 3-bracket-parser 3-bracket-parser.c
+
+.PHONY: all clean fuzz
