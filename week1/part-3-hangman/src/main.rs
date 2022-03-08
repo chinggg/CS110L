@@ -37,4 +37,42 @@ fn main() {
     // println!("random word: {}", secret_word);
 
     // Your code here! :)
+    let mut result_chars: Vec<char> = vec!['-'; secret_word_chars.len()];
+    let mut guess_history: Vec<char> = Vec::new();
+    let mut guess_left: u32 = NUM_INCORRECT_GUESSES;
+    loop {
+        let mut guess_correct = false;
+        println!("The word so far is {}", result_chars.iter().collect::<String>());
+        println!("You have guessed {}", guess_history.iter().collect::<String>());
+        println!("You have {} guesses left", guess_left);
+        print!("Please guess a letter: ");
+        // Make sure the prompt from the previous line gets displayed:
+        io::stdout().flush().expect("Error flushing stdout.");
+        let mut guess = String::new();
+        io::stdin()
+            .read_line(&mut guess)
+            .expect("Error reading line.");
+        let guess = guess.chars().next().unwrap();
+        guess_history.push(guess);
+        for (i, ch) in secret_word_chars.iter().enumerate() {
+            if result_chars[i] != '-' {
+                continue;
+            }
+            if guess == *ch {
+                guess_correct = true;
+                result_chars[i] = guess;
+                break;
+            } 
+        }
+        
+        if !guess_correct {
+            println!("Sorry, that letter is not in the word");
+            guess_left -= 1;
+        }
+        println!();
+        if result_chars == secret_word_chars {
+            println!("Congratulations you guessed the secret word: {}!", secret_word);
+            break;
+        }
+    }
 }
