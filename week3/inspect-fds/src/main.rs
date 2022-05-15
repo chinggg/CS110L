@@ -15,7 +15,7 @@ fn main() {
     let proc = ps_utils::get_target(target).expect(format!("Failed to get target process {target}").as_str());
     match proc {
         Some(proc) => {
-            println!("Found pid {}", proc.pid);
+            proc.print();
         }
         None => {
             println!("No matching processes found");
