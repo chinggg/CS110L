@@ -16,6 +16,10 @@ fn main() {
     match proc {
         Some(proc) => {
             proc.print();
+            let childs = ps_utils::get_child_processes(proc.pid).expect("Failed to get child processes");
+            for child in childs {
+                child.print();
+            }
         }
         None => {
             println!("No matching processes found");
