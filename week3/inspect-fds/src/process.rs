@@ -1,5 +1,4 @@
 use crate::open_file::OpenFile;
-#[allow(unused)] // TODO: delete this line for Milestone 3
 use std::fs;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -16,6 +15,7 @@ impl Process {
 
     pub fn print(&self) {
         println!("========== \"{}\" (pid {}, ppid {}) ==========", self.command, self.pid, self.ppid);
+        println!("fds {:?} ", self.list_fds().unwrap());
     }
 
     /// This function returns a list of file descriptor numbers for this Process, if that
@@ -23,10 +23,15 @@ impl Process {
     /// information will commonly be unavailable if the process has exited. (Zombie processes
     /// still have a pid, but their resources have already been freed, including the file
     /// descriptor table.)
-    #[allow(unused)] // TODO: delete this line for Milestone 3
     pub fn list_fds(&self) -> Option<Vec<usize>> {
-        // TODO: implement for Milestone 3
-        unimplemented!();
+        let path = format!("/proc/{}/fd", self.pid);
+        let mut fds = Vec::<usize>::new();
+        for entry in fs::read_dir(path).ok()? {
+            let entry = entry.ok()?;
+            let fd = entry.file_name().into_string().unwrap().parse::<usize>().ok()?;
+            fds.push(fd);
+        }
+        Some(fds)
     }
 
     /// This function returns a list of (fdnumber, OpenFile) tuples, if file descriptor
