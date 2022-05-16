@@ -1,5 +1,5 @@
 use crate::debugger_command::DebuggerCommand;
-use crate::inferior::Inferior;
+use crate::inferior::{Inferior};
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
 
@@ -35,9 +35,10 @@ impl Debugger {
                     if let Some(inferior) = Inferior::new(&self.target, &args) {
                         // Create the inferior
                         self.inferior = Some(inferior);
-                        // TODO (milestone 1): make the inferior run
                         // You may use self.inferior.as_mut().unwrap() to get a mutable reference
                         // to the Inferior object
+                        let status = self.inferior.as_mut().unwrap().cont().unwrap();
+                        println!("Child exited with status {:?}", status);
                     } else {
                         println!("Error starting subprocess");
                     }
