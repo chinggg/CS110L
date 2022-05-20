@@ -29,6 +29,7 @@ fn child_traceme() -> Result<(), std::io::Error> {
     )))
 }
 
+#[derive(Debug)]
 pub struct Inferior {
     child: Child,
 }
@@ -70,9 +71,15 @@ impl Inferior {
         })
     }
 
-    // Continue this inferior and returns a Status to indicate the state of the process
+    // Continue stopped inferior and returns a Status to indicate the state of the process
     pub fn cont(&self) -> Result<Status, nix::Error> {
         ptrace::cont(self.pid(), None)?;
+        self.wait(None)
+    }
+
+    // Kill stopped inferior and returns a Status to indicate the state of the process
+    pub fn kill(&mut self) -> Result<Status, nix::Error> {
+        self.child.kill().expect("Fail to kill inferior process");
         self.wait(None)
     }
 }

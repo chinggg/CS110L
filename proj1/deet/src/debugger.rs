@@ -32,6 +32,12 @@ impl Debugger {
         loop {
             match self.get_next_command() {
                 DebuggerCommand::Run(args) => {
+                    // If inferior is not None, can only be stopped, kill it
+                    // Because normally exited process has been set to None
+                    if let Some(inferior) = &mut self.inferior {
+                        println!("Killing running process (pid={})", inferior.pid());
+                        inferior.kill().unwrap();
+                    }
                     if let Some(inferior) = Inferior::new(&self.target, &args) {
                         // Create the inferior
                         self.inferior = Some(inferior);
@@ -55,7 +61,31 @@ impl Debugger {
                         println!("Error starting subprocess");
                     }
                 }
+                DebuggerCommand::Continue => match &self.inferior {
+                    Some(inferior) => {
+                        let status = inferior.cont().expect("Fail to continue inferior process");
+                        match status {
+                            Status::Exited(exit_code) => {
+                                println!("Process exited with code {}", exit_code);
+                                self.inferior = None
+                            }
+                            Status::Signaled(signal) => {
+                                println!("Process exited by signal {}", signal);
+                                self.inferior = None
+                            }
+                            Status::Stopped(signal, rip) => {
+                                println!("Process stopped with signal {} at address 0x{:x}", signal, rip);
+                            }
+                        }
+                    }
+                    None => println!("No inferior process to continue"),
+                },
                 DebuggerCommand::Quit => {
+                    if let Some(inferior) = &mut self.inferior {
+                        // inferior is not None, must be stopped
+                        println!("Killing running process (pid={})", inferior.pid());
+                        inferior.kill().unwrap();
+                    }
                     return;
                 }
             }
