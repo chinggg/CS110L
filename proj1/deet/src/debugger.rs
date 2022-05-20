@@ -68,6 +68,7 @@ impl Debugger {
                             }
                             Status::Stopped(signal, rip) => {
                                 println!("Process stopped with signal {} at address 0x{:x}", signal, rip);
+                                self.inferior.as_ref().unwrap().print_stop(&self.debug_data).unwrap();
                             }
                         }
                     } else {
@@ -88,6 +89,7 @@ impl Debugger {
                             }
                             Status::Stopped(signal, rip) => {
                                 println!("Process stopped with signal {} at address 0x{:x}", signal, rip);
+                                self.inferior.as_ref().unwrap().print_stop(&self.debug_data).unwrap();
                             }
                         }
                     }

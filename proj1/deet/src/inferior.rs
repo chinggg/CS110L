@@ -85,6 +85,13 @@ impl Inferior {
         self.wait(None)
     }
 
+    pub fn print_stop(&self, debug_data: &DwarfData) -> Result<(), nix::Error> {
+        let rip = ptrace::getregs(self.pid())?.rip as usize;
+        let func = debug_data.get_function_from_addr(rip).unwrap();
+        let line = debug_data.get_line_from_addr(rip).unwrap();
+        println!("Stopped at {} ({})", func, line);
+        Ok(())
+    }
     pub fn print_backtrace(&self, debug_data: &DwarfData) -> Result<(), nix::Error> {
         let regs = ptrace::getregs(self.pid())?;
         let mut rip = regs.rip as usize;
