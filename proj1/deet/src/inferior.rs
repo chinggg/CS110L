@@ -2,11 +2,16 @@ use nix::sys::ptrace;
 use nix::sys::signal;
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::Pid;
+use std::mem::size_of;
 use std::os::unix::process::CommandExt;
 use std::process::Child;
 use std::process::Command;
 
 use crate::dwarf_data::DwarfData;
+
+fn align_addr_to_word(addr: u64) -> u64 {
+    addr & (-(size_of::<u64>() as i64) as u64)
+}
 
 #[derive(Debug)]
 pub enum Status {
@@ -39,15 +44,18 @@ pub struct Inferior {
 impl Inferior {
     /// Attempts to start a new inferior process. Returns Some(Inferior) if successful, or None if
     /// an error is encountered.
-    pub fn new(target: &str, args: &Vec<String>) -> Option<Inferior> {
+    pub fn new(target: &str, args: &Vec<String>, breaks: &Vec<u64>) -> Option<Inferior> {
         let mut cmd = Command::new(target);
         unsafe {
             cmd.args(args).pre_exec(child_traceme);
         }
         let child = cmd.spawn().ok()?;
-        let inferior = Inferior { child };
+        let mut inferior = Inferior { child };
         match inferior.wait(None) {
             Ok(Status::Stopped(signal::SIGTRAP, _)) => {
+                for breakpoint in breaks {
+                    inferior.write_byte(*breakpoint, 0xcc).ok()?;
+                }
                 Some(inferior)
             }
             _ => None
@@ -85,13 +93,6 @@ impl Inferior {
         self.wait(None)
     }
 
-    pub fn print_stop(&self, debug_data: &DwarfData) -> Result<(), nix::Error> {
-        let rip = ptrace::getregs(self.pid())?.rip as usize;
-        let func = debug_data.get_function_from_addr(rip).unwrap();
-        let line = debug_data.get_line_from_addr(rip).unwrap();
-        println!("Stopped at {} ({})", func, line);
-        Ok(())
-    }
     pub fn print_backtrace(&self, debug_data: &DwarfData) -> Result<(), nix::Error> {
         let regs = ptrace::getregs(self.pid())?;
         let mut rip = regs.rip as usize;
@@ -108,5 +109,28 @@ impl Inferior {
           rbp = ptrace::read(self.pid(), rbp as ptrace::AddressType)? as usize;
         }
         Ok(())
+    }
+
+    pub fn print_stop(&self, debug_data: &DwarfData) -> Result<(), nix::Error> {
+        let rip = ptrace::getregs(self.pid())?.rip as usize;
+        let func = debug_data.get_function_from_addr(rip).unwrap();
+        let line = debug_data.get_line_from_addr(rip).unwrap();
+        println!("Stopped at {} ({})", func, line);
+        Ok(())
+    }
+
+    pub fn write_byte(&mut self, addr: u64, val: u8) -> Result<u8, nix::Error> {
+        let aligned_addr = align_addr_to_word(addr);
+        let byte_offset = addr - aligned_addr;
+        let word = ptrace::read(self.pid(), aligned_addr as ptrace::AddressType)? as u64;
+        let orig_byte = (word >> 8 * byte_offset) & 0xff;
+        let masked_word = word & !(0xff << 8 * byte_offset);
+        let updated_word = masked_word | ((val as u64) << 8 * byte_offset);
+        ptrace::write(
+            self.pid(),
+            aligned_addr as ptrace::AddressType,
+            updated_word as *mut std::ffi::c_void,
+        )?;
+        Ok(orig_byte as u8)
     }
 }

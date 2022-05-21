@@ -4,12 +4,22 @@ use crate::inferior::{Inferior, Status};
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
 
+fn parse_address(addr: &str) -> Option<u64> {
+    let addr_without_0x = if addr.to_lowercase().starts_with("0x") {
+        &addr[2..]
+    } else {
+        &addr
+    };
+    u64::from_str_radix(addr_without_0x, 16).ok()
+}
+
 pub struct Debugger {
     target: String,
     history_path: String,
     readline: Editor<()>,
     inferior: Option<Inferior>,
     debug_data: DwarfData,
+    breaks: Vec<u64>,
 }
 
 impl Debugger {
@@ -27,6 +37,8 @@ impl Debugger {
             }
         };
 
+        debug_data.print();
+
         let history_path = format!("{}/.deet_history", std::env::var("HOME").unwrap());
         let mut readline = Editor::<()>::new();
         // Attempt to load history from ~/.deet_history if it exists
@@ -38,6 +50,7 @@ impl Debugger {
             readline,
             inferior: None,
             debug_data,
+            breaks: Vec::<u64>::new(),
         }
     }
 
@@ -51,7 +64,7 @@ impl Debugger {
                         println!("Killing running process (pid={})", inferior.pid());
                         inferior.kill().unwrap();
                     }
-                    if let Some(inferior) = Inferior::new(&self.target, &args) {
+                    if let Some(inferior) = Inferior::new(&self.target, &args, &self.breaks) {
                         // Create the inferior
                         self.inferior = Some(inferior);
                         // You may use self.inferior.as_mut().unwrap() to get a mutable reference
@@ -108,6 +121,23 @@ impl Debugger {
                         inferior.kill().unwrap();
                     }
                     return;
+                }
+                DebuggerCommand::BreakPoint(arg) => {
+                    match arg.chars().next() {
+                        Some('*') => {
+                            match parse_address(&arg[1..]) {
+                                Some(addr) => {
+                                    println!("Set breakpoint {} at address {:#x}", self.breaks.len(), addr);
+                                    self.breaks.push(addr);
+                                    if let Some(inferior) = &mut self.inferior {
+                                        inferior.write_byte(addr, 0xcc).unwrap();
+                                    }
+                                }
+                                None => println!("Fail to parse address {}", &arg[1..]),
+                            }
+                        }
+                        _ => println!("Not only support *addr"),
+                    }
                 }
             }
         }
