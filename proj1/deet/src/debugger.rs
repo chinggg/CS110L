@@ -88,7 +88,7 @@ impl Debugger {
                         println!("Error starting subprocess");
                     }
                 }
-                DebuggerCommand::Continue => match &self.inferior {
+                DebuggerCommand::Continue => match &mut self.inferior {
                     Some(inferior) => {
                         let status = inferior.cont().expect("Fail to continue inferior process");
                         match status {
@@ -130,7 +130,8 @@ impl Debugger {
                                     println!("Set breakpoint {} at address {:#x}", self.breaks.len(), addr);
                                     self.breaks.push(addr);
                                     if let Some(inferior) = &mut self.inferior {
-                                        inferior.write_byte(addr, 0xcc).unwrap();
+                                        let orig_byte = inferior.write_byte(addr, 0xcc).unwrap();
+                                        inferior.bp_map.insert(addr, orig_byte);
                                     }
                                 }
                                 None => println!("Fail to parse address {}", &arg[1..]),

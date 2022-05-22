@@ -2,6 +2,7 @@ use nix::sys::ptrace;
 use nix::sys::signal;
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::Pid;
+use std::collections::HashMap;
 use std::mem::size_of;
 use std::os::unix::process::CommandExt;
 use std::process::Child;
@@ -39,6 +40,7 @@ fn child_traceme() -> Result<(), std::io::Error> {
 #[derive(Debug)]
 pub struct Inferior {
     child: Child,
+    pub bp_map: HashMap<u64, u8>
 }
 
 impl Inferior {
@@ -50,11 +52,12 @@ impl Inferior {
             cmd.args(args).pre_exec(child_traceme);
         }
         let child = cmd.spawn().ok()?;
-        let mut inferior = Inferior { child };
+        let mut inferior = Inferior { child , bp_map: HashMap::<u64, u8>::new() };
         match inferior.wait(None) {
             Ok(Status::Stopped(signal::SIGTRAP, _)) => {
-                for breakpoint in breaks {
-                    inferior.write_byte(*breakpoint, 0xcc).ok()?;
+                for breakaddr in breaks {
+                    let orig_byte = inferior.write_byte(*breakaddr, 0xcc).ok()?;
+                    inferior.bp_map.insert(*breakaddr, orig_byte);
                 }
                 Some(inferior)
             }
@@ -82,7 +85,21 @@ impl Inferior {
     }
 
     // Continue stopped inferior and returns a Status to indicate the state of the process
-    pub fn cont(&self) -> Result<Status, nix::Error> {
+    pub fn cont(&mut self) -> Result<Status, nix::Error> {
+        let mut regs = ptrace::getregs(self.pid())?;
+        let rip = regs.rip;
+        if let Some(orig_byte) = self.bp_map.clone().get(&(rip - 1)) {  // double borrow if not clone
+            self.write_byte(rip - 1, *orig_byte)?;
+            regs.rip -= 1;
+            ptrace::setregs(self.pid(), regs)?;
+            ptrace::step(self.pid(), None)?;
+            match self.wait(None) {
+                Ok(Status::Stopped(signal::SIGTRAP, _addr)) => {
+                    self.write_byte(rip - 1, 0xcc)?;
+                }
+                others => { return others; }
+            }
+        }
         ptrace::cont(self.pid(), None)?;
         self.wait(None)
     }
