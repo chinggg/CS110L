@@ -123,21 +123,44 @@ impl Debugger {
                     return;
                 }
                 DebuggerCommand::BreakPoint(arg) => {
+                    let mut break_addr: Option<u64> = None;
                     match arg.chars().next() {
-                        Some('*') => {
+                        Some('*') => {  // raw address
                             match parse_address(&arg[1..]) {
                                 Some(addr) => {
-                                    println!("Set breakpoint {} at address {:#x}", self.breaks.len(), addr);
-                                    self.breaks.push(addr);
-                                    if let Some(inferior) = &mut self.inferior {
-                                        let orig_byte = inferior.write_byte(addr, 0xcc).unwrap();
-                                        inferior.bp_map.insert(addr, orig_byte);
-                                    }
+                                    break_addr = Some(addr);
                                 }
                                 None => println!("Fail to parse address {}", &arg[1..]),
                             }
                         }
-                        _ => println!("Not only support *addr"),
+                        _ => {
+                            match usize::from_str_radix(&arg, 10) {
+                                Ok(line_number) => {
+                                    match self.debug_data.get_addr_for_line(None, line_number) {
+                                        Some(addr) => {  // debug_data may give wrong addr
+                                            break_addr = Some(addr as u64);
+                                        },
+                                        None => println!("No address found for line {}", line_number),
+                                    }
+                                },
+                                Err(_) => {  // function name
+                                    match self.debug_data.get_addr_for_function(None, &arg){
+                                        Some(addr) => {
+                                            break_addr = Some(addr as u64);
+                                        },
+                                        None => println!("No address found for function {}", arg),
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let Some(addr) = break_addr {
+                        println!("Set breakpoint {} at address {:#x}", self.breaks.len(), addr);
+                        self.breaks.push(addr);
+                        if let Some(inferior) = &mut self.inferior {
+                            let orig_byte = inferior.write_byte(addr, 0xcc).unwrap();
+                            inferior.bp_map.insert(addr, orig_byte);
+                        }
                     }
                 }
             }
