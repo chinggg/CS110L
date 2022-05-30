@@ -80,7 +80,8 @@ fn main() {
     for _ in 0..num_threads {
         let numbers_ref = numbers.clone();
         threads.push(thread::spawn(move || {
-            match numbers_ref.lock().unwrap().pop_front() {
+            let num = numbers_ref.lock().unwrap().pop_front();
+            match num {
                 Some(num) => factor_number(num),
                 None => return,
             }
