@@ -8,20 +8,21 @@ where
     U: Send + 'static + Default,
 {
     let mut output_vec: Vec<U> = Vec::with_capacity(input_vec.len());
-    let (in_sender, in_receiver) = crossbeam_channel::unbounded::<T>();
-    let (out_sender, out_receiver) = crossbeam_channel::unbounded::<U>();
+    let (in_sender, in_receiver) = crossbeam_channel::unbounded::<(usize, T)>();
+    let (out_sender, out_receiver) = crossbeam_channel::unbounded();
     let mut threads = Vec::new();
     for _ in 0..num_threads {
         let in_receiver = in_receiver.clone();
         let out_sender = out_sender.clone();
         threads.push(thread::spawn(move || {
-            while let Ok(num) = in_receiver.recv() {
-                out_sender.send(f(num)).unwrap();
+            while let Ok(pair) = in_receiver.recv() {
+                let out = (pair.0, f(pair.1));
+                out_sender.send(out).unwrap();
             }
         }))
     }
-    for num in input_vec {
-        in_sender.send(num).unwrap();
+    for (i, num) in input_vec.into_iter().enumerate() {
+        in_sender.send((i, num)).unwrap();
     }
     drop(in_sender);
     drop(out_sender);
@@ -29,8 +30,9 @@ where
     for thread in threads {
         thread.join().unwrap();
     }
-    while let Ok(out) = out_receiver.recv() {
-        output_vec.push(out)
+    unsafe { output_vec.set_len(output_vec.capacity()); }
+    while let Ok((i, ans)) = out_receiver.recv() {
+        output_vec[i] = ans;
     }
     output_vec
 }
