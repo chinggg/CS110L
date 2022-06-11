@@ -30,7 +30,7 @@ where
     for thread in threads {
         thread.join().unwrap();
     }
-    unsafe { output_vec.set_len(output_vec.capacity()); }
+    output_vec.resize_with(output_vec.capacity(), Default::default);
     while let Ok((i, ans)) = out_receiver.recv() {
         output_vec[i] = ans;
     }
