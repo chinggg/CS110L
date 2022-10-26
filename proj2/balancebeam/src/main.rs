@@ -1,9 +1,10 @@
 mod request;
 mod response;
 
+use std::sync::Arc;
 use clap::Parser;
 use rand::{Rng, SeedableRng};
-use tokio::{net::{TcpListener, TcpStream}, stream::StreamExt, sync::RwLock};
+use tokio::{net::{TcpListener, TcpStream}, stream::StreamExt, sync::RwLock, time};
 
 /// Contains information parsed from the command-line invocation of balancebeam. The Parser macros
 /// provide a fancy way to automatically construct a command-line argument parser.
@@ -95,11 +96,21 @@ async fn main() {
         active_health_check_path: options.active_health_check_path,
         max_requests_per_minute: options.max_requests_per_minute,
     };
+    // FIXME: I have no idea if Arc works, just to compile successfully
+    // Now `cargo test active_health_checks` never stops, maybe there are deadlocks when writing shared state
+    let shared_state = Arc::new(state);
+    let shared_state_ref = shared_state.clone();
+    tokio::spawn(async move {
+        loop {
+            time::delay_for(time::Duration::from_secs(shared_state_ref.active_health_check_interval as u64)).await;
+            active_health_check(&shared_state_ref).await;
+        }
+    });
     let mut incoming = listener.incoming();
     while let Some(stream) = incoming.next().await{
         if let Ok(stream) = stream {
             // Handle the connection!
-            handle_connection(stream, &state).await;
+            handle_connection(stream, &shared_state.clone()).await;
         }
     }
 }
@@ -219,5 +230,44 @@ async fn handle_connection(mut client_conn: TcpStream, state: &ProxyState) {
         // Forward the response to the client
         send_response(&mut client_conn, &response).await;
         log::debug!("Forwarded response to client");
+    }
+}
+
+async fn active_health_check(state: &ProxyState) {
+    for (idx, upstream ) in state.upstream_addresses.iter().enumerate() {
+        let req = http::Request::builder()
+            .method(http::Method::GET)
+            .uri(&state.active_health_check_path)
+            .header("Host", upstream)
+            .body(Vec::<u8>::new())
+            .unwrap();
+        match TcpStream::connect(upstream).await {
+            Ok(mut stream) => {
+                match request::write_to_stream(&req, &mut stream).await {
+                    Ok(_) => {
+                        match response::read_from_stream(&mut stream, req.method()).await {
+                            Ok(response) => {
+                                match response.status() {
+                                    http::StatusCode::ACCEPTED => (),
+                                    status => {
+                                        log::info!("Upstream {} returns {}", upstream, status);
+                                        let mut alives_write = state.upstream_alives.write().await;
+                                        alives_write.1[idx] = false;
+                                    }
+                                }
+                            }
+                            Err(err) => {
+                                log::info!("Fail to read response from {} : {:?}", upstream, err);
+                            }
+                        }
+                    },
+                    Err(err) => log::error!("Failed to send request {:?} to upstream {}: {:?}", req, upstream, err)
+                }
+            },
+            Err(err) => {
+                log::error!("Failed to connect to upstream {}: {}", upstream, err);
+                continue;
+            }
+        }
     }
 }
