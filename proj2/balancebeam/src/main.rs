@@ -57,6 +57,7 @@ struct ProxyState {
     /// Addresses of servers that we are proxying to
     upstream_addresses: Vec<String>,
     /// Whether upstream servers are still alive (true/false), wrapped in a RwLock
+    /// NOTE: (alive_cnt, alive_bools), I just ignored the cnt completely
     upstream_alives: RwLock<(usize, Vec<bool>)>,
 }
 
@@ -96,8 +97,7 @@ async fn main() {
         active_health_check_path: options.active_health_check_path,
         max_requests_per_minute: options.max_requests_per_minute,
     };
-    // FIXME: I have no idea if Arc works, just to compile successfully
-    // Now `cargo test active_health_checks` never stops, maybe there are deadlocks when writing shared state
+    // NOTE: Arc here should be fine, the hang of program is not caused by deadlock
     let shared_state = Arc::new(state);
     let shared_state_ref = shared_state.clone();
     tokio::spawn(async move {
@@ -110,7 +110,7 @@ async fn main() {
     while let Some(stream) = incoming.next().await{
         if let Ok(stream) = stream {
             // Handle the connection!
-            handle_connection(stream, &shared_state.clone()).await;
+            handle_connection(stream, &shared_state).await;
         }
     }
 }
@@ -118,13 +118,15 @@ async fn main() {
 async fn pick_known_alive_upstream(state: &ProxyState) -> Option<usize> {
     let mut rng = rand::rngs::StdRng::from_entropy();
     let alives_read = state.upstream_alives.read().await;
-    loop {  // FIXME: can this loop stop if all upstreams are known to be dead?
+    while alives_read.0 > 0 {  // NOTE: infinite loop happens when I don't check alive_cnt
         let upstream_idx = rng.gen_range(0, state.upstream_addresses.len());
         if alives_read.1[upstream_idx] {
             return Some(upstream_idx);
         }
     }
-    // FIXME: can this function return None to notify connect_to_upstream if all upstreams are dead?
+    None
+    // NOTE: I just ignored the alive_cnt stored in the lock
+    // so there was infinite loop when all upstreams are known to be dead
 }
 
 async fn connect_to_upstream(state: &ProxyState) -> Result<TcpStream, std::io::Error> {
@@ -136,7 +138,10 @@ async fn connect_to_upstream(state: &ProxyState) -> Result<TcpStream, std::io::E
             Err(err) => {
                 log::error!("Failed to connect to upstream {}: {}", upstream_ip, err);
                 let mut alives_write = state.upstream_alives.write().await;
-                alives_write.1[upstream_idx] = false;
+                if alives_write.1[upstream_idx] == true {  // NOTE: check before modify since we have more than one writer
+                    alives_write.1[upstream_idx] = false;
+                    alives_write.0 -= 1;
+                }
             }
         }
     }
@@ -248,11 +253,22 @@ async fn active_health_check(state: &ProxyState) {
                         match response::read_from_stream(&mut stream, req.method()).await {
                             Ok(response) => {
                                 match response.status() {
-                                    http::StatusCode::ACCEPTED => (),
-                                    status => {
-                                        log::info!("Upstream {} returns {}", upstream, status);
+                                    http::StatusCode::OK => {  // NOTE: 200 OK is not 202 Accepted
+                                        // NOTE: don't forget to bring upstream alive
                                         let mut alives_write = state.upstream_alives.write().await;
-                                        alives_write.1[idx] = false;
+                                        if alives_write.1[idx] == false {
+                                            log::info!("Upstream {} returns OK again", upstream);
+                                            alives_write.1[idx] = true;
+                                            alives_write.0 += 1;
+                                        }
+                                    },
+                                    status => {
+                                        log::info!("Upstream {} returns {} instead of OK", upstream, status);
+                                        let mut alives_write = state.upstream_alives.write().await;
+                                        if alives_write.1[idx] == true {
+                                            alives_write.1[idx] = false;
+                                            alives_write.0 -= 1;
+                                        }
                                     }
                                 }
                             }
