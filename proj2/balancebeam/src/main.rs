@@ -1,7 +1,7 @@
 mod request;
 mod response;
 
-use std::sync::Arc;
+use std::{sync::Arc, collections::HashMap};
 use clap::Parser;
 use rand::{Rng, SeedableRng};
 use tokio::{net::{TcpListener, TcpStream}, stream::StreamExt, sync::RwLock, time};
@@ -59,6 +59,8 @@ struct ProxyState {
     /// Whether upstream servers are still alive (true/false), wrapped in a RwLock
     /// NOTE: (alive_cnt, alive_bools), I just ignored the cnt completely
     upstream_alives: RwLock<(usize, Vec<bool>)>,
+    /// Counts of requests made by each client IP per minute
+    requests_counter: RwLock<HashMap<String, usize>>,
 }
 
 #[tokio::main]
@@ -96,9 +98,11 @@ async fn main() {
         active_health_check_interval: options.active_health_check_interval,
         active_health_check_path: options.active_health_check_path,
         max_requests_per_minute: options.max_requests_per_minute,
+        requests_counter: RwLock::new(HashMap::new()),
     };
     // NOTE: Arc here should be fine, the hang of program is not caused by deadlock
     let shared_state = Arc::new(state);
+    // Actively check health of all upstreams per interval
     let shared_state_ref = shared_state.clone();
     tokio::spawn(async move {
         loop {
@@ -106,6 +110,16 @@ async fn main() {
             active_health_check(&shared_state_ref).await;
         }
     });
+    // Reset rate with fixed window per minute
+    if options.max_requests_per_minute > 0 {
+        let shared_state_ref = shared_state.clone();
+        tokio::spawn(async move {
+            loop {
+                time::delay_for(time::Duration::from_secs(60)).await;
+                reset_rate_fixed_window(&shared_state_ref).await;
+            }
+        });
+    }
     let mut incoming = listener.incoming();
     while let Some(stream) = incoming.next().await{
         if let Ok(stream) = stream {
@@ -169,7 +183,9 @@ async fn handle_connection(mut client_conn: TcpStream, state: &ProxyState) {
             return;
         }
     };
-    let upstream_ip = client_conn.peer_addr().unwrap().ip().to_string();
+    // NOTE: the starter code had a typo here, making upstream_ip same as client_ip
+    // luckily upstream_ip is just used for log and does not affect the correctness of the program
+    let upstream_ip = upstream_conn.peer_addr().unwrap().ip().to_string();
 
     // The client may now send us one or more requests. Keep trying to read requests until the
     // client hangs up or we get an error.
@@ -201,6 +217,21 @@ async fn handle_connection(mut client_conn: TcpStream, state: &ProxyState) {
                 continue;
             }
         };
+
+        // Respond 429 if client hit the rate limit
+        // NOTE: respond here after reading request completely otherwise the test fails sometimes
+        if state.max_requests_per_minute > 0 {
+            let mut request_counter = state.requests_counter.write().await;
+            let cnt = request_counter.entry(client_ip.clone()).or_insert(0);
+            *cnt += 1;
+            if *cnt > state.max_requests_per_minute {
+                log::warn!("Too many requests from {}, {} exceeding rate limit {}", &client_ip, *cnt, state.max_requests_per_minute);
+                let response = response::make_http_error(http::StatusCode::TOO_MANY_REQUESTS);
+                send_response(&mut client_conn, &response).await;
+                return;
+            }
+        }
+
         log::info!(
             "{} -> {}: {}",
             client_ip,
@@ -286,4 +317,9 @@ async fn active_health_check(state: &ProxyState) {
             }
         }
     }
+}
+
+async fn reset_rate_fixed_window (state: &ProxyState) {
+    let mut requests_write = state.requests_counter.write().await;
+    requests_write.clear();
 }
