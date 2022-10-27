@@ -46,13 +46,10 @@ struct CmdOptions {
 /// You should add fields to this struct in later milestones.
 struct ProxyState {
     /// How frequently we check whether upstream servers are alive (Milestone 4)
-    #[allow(dead_code)]
     active_health_check_interval: usize,
     /// Where we should send requests when doing active health checks (Milestone 4)
-    #[allow(dead_code)]
     active_health_check_path: String,
     /// Maximum number of requests an individual IP can make in a minute (Milestone 5)
-    #[allow(dead_code)]
     max_requests_per_minute: usize,
     /// Addresses of servers that we are proxying to
     upstream_addresses: Vec<String>,
